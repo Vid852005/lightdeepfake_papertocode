@@ -22,7 +22,7 @@ The pipeline consists of four primary stages:
 Evaluation was performed on a [balanced dataset of real and manipulated videos](https://www.kaggle.com/datasets/reubensuju/celeb-df-v2).
 
 
-* **Accuracy** :( **74% – 78%** )Improvement was observed as the dataset scaled from 500 to 1000 videos. 
+* **Accuracy** :( **74% –> 78%** )Improvement was observed as the dataset scaled from 500 to 1000 videos. 
 * **Inference Speed**( **1.45 FPS**) **5 times faster** than original on CPU. 
 * **Temporal Context**:(**40 Frames**)Increased from 20 to 40 for better anomaly detection. 
 * **Precision** : (**~80%** ) reduced false positives because of balanced sampling.
