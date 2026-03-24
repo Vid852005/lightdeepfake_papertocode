@@ -1,26 +1,3 @@
-# =============================================================================
-# preprocess.py — MTCNN face detection + SSIM deduplication pipeline
-#
-# Changes from original, all documented:
-#
-# [Paper-faithful]
-#   - Padding uses frame repetition (not np.zeros) — paper Section 3.3:
-#     "duplicating frames as needed". Zero-padding introduced black frames
-#     that the GRU learned as an artefact signal.
-#
-# [Reasoned extension — paper Section 6 / Figure 6]
-#   - augment_frames(): horizontal flip + brightness jitter on training crops.
-#     The paper's own misclassification analysis (Figure 6) shows illumination
-#     changes and facial occlusions cause false positives. Brightness jitter
-#     directly targets the illumination failure mode.
-#     Only applied during build_dataset(is_train=True).
-#
-# [Engineering fix]
-#   - Memory-safe streaming: build_dataset() yields per-video and stacks only
-#     at the end. Previously the entire dataset was held twice in RAM during
-#     np.array(X) conversion.
-#   - PyTorch/MTCNN is CPU-only; torch.set_num_threads set to match CONFIG.
-# =============================================================================
 
 import os
 import random
@@ -33,12 +10,6 @@ from skimage.metrics import structural_similarity as ssim
 from tqdm import tqdm
 
 from config import CONFIG
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Device setup
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Force CPU — no CUDA on AMD Radeon iGPU without ROCm
 DEVICE = "cpu"
 torch.set_num_threads(CONFIG["tf_inter_op_threads"])
 
@@ -52,21 +23,10 @@ _mtcnn = MTCNN(
     device=DEVICE,
     keep_all=False,
 )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Face detection
-# ─────────────────────────────────────────────────────────────────────────────
-
 def detect_and_crop_face(
     frame_bgr: np.ndarray,
     conf_threshold: float = 0.99
 ) -> np.ndarray | None:
-    """
-    Detect the largest face in a BGR frame using MTCNN.
-
-    Returns img_size × img_size RGB array, or None if no face passes threshold.
-    """
     frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
     try:
         boxes, probs = _mtcnn.detect(frame_rgb)
@@ -79,8 +39,6 @@ def detect_and_crop_face(
         ]
         if not valid:
             return None
-
-        # Largest bounding box
         box = max(valid, key=lambda x: (x[0][2] - x[0][0]) * (x[0][3] - x[0][1]))[0]
         x1, y1, x2, y2 = (int(v) for v in box)
         x1, y1 = max(0, x1), max(0, y1)
@@ -95,21 +53,10 @@ def detect_and_crop_face(
 
     except Exception:
         return None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SSIM deduplication
-# ─────────────────────────────────────────────────────────────────────────────
-
 def filter_frames_ssim(
     frames: list[np.ndarray],
     threshold: float = 0.85
 ) -> list[np.ndarray]:
-    """
-    Remove near-duplicate consecutive frames using SSIM.
-
-    Paper Section 3.3: initial threshold=0.85, adaptive up to 0.97.
-    """
     if not frames:
         return frames
 
@@ -122,30 +69,9 @@ def filter_frames_ssim(
             unique.append(frame)
 
     return unique
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Augmentation (extension — motivated by paper Section 6 / Figure 6)
-# ─────────────────────────────────────────────────────────────────────────────
-
 def augment_frames(frames: np.ndarray, label: int) -> np.ndarray:
-    """
-    Apply training-time augmentation to a [T, H, W, 3] float32 array.
-
-    - Horizontal flip (50% chance, all labels):
-        Deepfake artifacts are symmetric; flipping preserves the detection signal.
-    - Brightness jitter ±10% (50% chance, all labels):
-        Targets illumination-induced misclassification (paper Figure 6).
-        Real videos misclassified as fake in 19/21 cases, largely due to
-        lighting changes per paper Section 6.
-
-    Parameters
-    ----------
-    frames : float32 array in [0, 1]
-    label  : class label (kept as parameter for possible label-conditional logic)
-    """
     if random.random() > 0.5:
-        frames = frames[:, :, ::-1, :].copy()  # horizontal flip
+        frames = frames[:, :, ::-1, :].copy()  
 
     if random.random() > 0.5:
         delta = random.uniform(-0.10, 0.10)
@@ -153,28 +79,11 @@ def augment_frames(frames: np.ndarray, label: int) -> np.ndarray:
 
     return frames
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Per-video preprocessing
-# ─────────────────────────────────────────────────────────────────────────────
-
 def preprocess_video(
     video_path:     str,
     label:          int,
     conf_threshold: float | None = None,
 ) -> tuple[np.ndarray, int] | None:
-    """
-    Full preprocessing pipeline for one video (paper Section 3.3):
-      1. Frame extraction (sub-sample to ≤100 for long videos).
-      2. MTCNN face detection & crop.
-      3. SSIM deduplication with adaptive threshold.
-      4. Pad / trim to [min_frames, max_frames].
-
-    Padding uses frame repetition (paper: "duplicating frames as needed").
-    Previous implementation used np.zeros which created artifactual black frames.
-
-    Returns (frames_array [T, H, W, 3] float32 in [0,1], label) or None.
-    """
     if conf_threshold is None:
         conf_threshold = CONFIG["mtcnn_conf_high"]
 
@@ -183,8 +92,6 @@ def preprocess_video(
         return None
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    # Sub-sample long videos (paper DFDC Section 3.3)
     if total_frames > 100:
         indices = sorted(random.sample(range(total_frames), 100))
     else:
@@ -200,46 +107,27 @@ def preprocess_video(
         if crop is not None:
             raw_frames.append(crop)
     cap.release()
-
-    # Retry with relaxed confidence if insufficient faces
     if len(raw_frames) < CONFIG["min_frames"] and conf_threshold > CONFIG["mtcnn_conf_low"]:
         return preprocess_video(video_path, label, CONFIG["mtcnn_conf_low"])
-
-    # Adaptive SSIM deduplication
     threshold = CONFIG["ssim_threshold_init"]
     unique_frames = filter_frames_ssim(raw_frames, threshold)
 
     while len(unique_frames) < CONFIG["min_frames"] and threshold < CONFIG["ssim_threshold_max"]:
         threshold += 0.02
         unique_frames = filter_frames_ssim(raw_frames, threshold)
-
-    # Frame repetition padding (paper Section 3.3)
-    # Fix: previous code used np.zeros (black frames) — replaced with repeat
     if len(unique_frames) < CONFIG["min_frames"]:
         while len(unique_frames) < CONFIG["min_frames"]:
             unique_frames.append(random.choice(unique_frames))
-
-    # Trim to max_frames
     if len(unique_frames) > CONFIG["max_frames"]:
         unique_frames = random.sample(unique_frames, CONFIG["max_frames"])
 
     frames_array = np.array(unique_frames, dtype=np.float32) / 255.0
     return frames_array, label
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Dataset path loaders
-# ─────────────────────────────────────────────────────────────────────────────
-
 def load_video_paths(
     real_dir:   str,
     fake_dir:   str,
     max_videos: int | None = None,
 ) -> list[tuple[str, int]]:
-    """
-    Collect (video_path, label) pairs.
-    If max_videos is set, performs BALANCED sampling (equal Real/Fake).
-    """
     exts = (".mp4", ".avi", ".mov")
     real_samples: list[tuple[str, int]] = []
     fake_samples: list[tuple[str, int]] = []
@@ -256,10 +144,8 @@ def load_video_paths(
 
     if max_videos:
         n_per_class = max_videos // 2
-        # Sample real
         if len(real_samples) > n_per_class:
             real_samples = random.sample(real_samples, n_per_class)
-        # Sample fake
         if len(fake_samples) > n_per_class:
             fake_samples = random.sample(fake_samples, n_per_class)
         
@@ -268,13 +154,10 @@ def load_video_paths(
     samples = real_samples + fake_samples
     random.shuffle(samples)
     return samples
-
-
 def load_dfdc_paths(
     dfdc_dir:   str,
     max_videos: int = 5372,
 ) -> list[tuple[str, int]]:
-    """Load (video_path, label) pairs from DFDC using metadata.json."""
     import json
     meta_path = os.path.join(dfdc_dir, "metadata.json")
     with open(meta_path) as f:
@@ -293,11 +176,6 @@ def load_dfdc_paths(
 
     return samples
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Dataset builder
-# ─────────────────────────────────────────────────────────────────────────────
-
 def build_dataset(
     samples:        list[tuple[str, int]],
     desc:           str,
@@ -305,15 +183,6 @@ def build_dataset(
     is_train:       bool = False,
     save_only:      bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Process a list of videos and save/return as numpy arrays.
-    
-    Parameters
-    ----------
-    save_only : bool
-        If True, only saves .npy checkpoints and returns empty arrays.
-        Crucial for 16GB RAM stability with large datasets.
-    """
     T = CONFIG["max_frames"]
     os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -321,8 +190,6 @@ def build_dataset(
     y: list[int]        = []
     skipped = 0
     resumed = 0
-
-    # Memory Safety: Use streaming mode if explicit or if dataset is large (>100 per paper ref)
     streaming_mode = save_only or len(samples) > 100
     if streaming_mode:
         print(f"[preprocess] Streaming mode enabled for {len(samples)} videos (memory safety)")
@@ -330,8 +197,6 @@ def build_dataset(
     for path, label in tqdm(samples, desc=desc):
         video_id  = os.path.splitext(os.path.basename(path))[0]
         ckpt_file = os.path.join(checkpoint_dir, f"{video_id}_{label}.npy")
-
-        # ── Load from checkpoint ──────────────────────────────────────────
         if os.path.exists(ckpt_file):
             if not streaming_mode:
                 frames = np.load(ckpt_file)
@@ -341,24 +206,18 @@ def build_dataset(
                 y.append(label)
             resumed += 1
             continue
-
-        # ── Process video ─────────────────────────────────────────────────
         result = preprocess_video(path, label)
         if result is None:
             skipped += 1
             continue
 
         frames, lbl = result
-
-        # Pad (frame repetition) or trim to fixed length T
         if len(frames) < T:
             while len(frames) < T:
                 frames = np.concatenate(
                     [frames, frames[:T - len(frames)]], axis=0
                 )
         frames = frames[:T]
-
-        # Save checkpoint (raw, pre-augmentation — augment at load time)
         np.save(ckpt_file, frames)
 
         if not streaming_mode:
