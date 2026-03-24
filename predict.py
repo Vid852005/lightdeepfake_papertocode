@@ -1,21 +1,3 @@
-# =============================================================================
-# predict.py — LightFakeDetect inference on one or more video files
-#
-# Extension: batch inference now reports total time and FPS, matching the
-# format of paper Table 1 so results are directly comparable to the paper's
-# A100 numbers (0.14–1.25 FPS on GPU).
-#
-# Usage
-# -----
-# Single video:
-#   python predict.py --model outputs/lightfakedetect_celeb.keras \
-#                     --video path/to/video.mp4
-#
-# Batch folder:
-#   python predict.py --model outputs/lightfakedetect_celeb.keras \
-#                     --folder path/to/videos/
-# =============================================================================
-
 import argparse
 import os
 import time
@@ -29,7 +11,6 @@ from preprocess import preprocess_video
 
 
 def load_model(model_path: str) -> tf.keras.Model:
-    """Load a saved LightFakeDetect model (handles custom CBAMLayer)."""
     configure_cpu()
     print(f"\nLoading model from: {model_path}")
     model = tf.keras.models.load_model(
@@ -40,7 +21,6 @@ def load_model(model_path: str) -> tf.keras.Model:
 
 
 def predict_video(model: tf.keras.Model, video_path: str) -> dict:
-    """Preprocess and predict a single video."""
     t0 = time.perf_counter()
     frames = preprocess_video(video_path, label=0)
     preprocess_time = time.perf_counter() - t0
@@ -73,7 +53,6 @@ def predict_video(model: tf.keras.Model, video_path: str) -> dict:
 
 
 def predict_folder(model: tf.keras.Model, folder_path: str) -> list:
-    """Run inference on all video files in a folder with FPS reporting."""
     exts = {".mp4", ".avi", ".mov", ".mkv"}
     videos = [
         os.path.join(folder_path, f)
