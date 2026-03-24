@@ -1,20 +1,8 @@
-# =============================================================================
-# evaluate.py — Metrics, confusion matrix, ROC curve, and FPS measurement
-#
-# Output matches paper Table 1: R, P, F1, Acc, AccB, Inference Time, FPS
-#
-# Extension beyond paper:
-#   - Timed single-sample inference loop → reports ms/frame and FPS.
-#     Paper Section 4.1 Table 1 reports FPS on A100 GPU. This code produces
-#     the equivalent numbers for CPU, enabling direct hardware comparison.
-#   - Per-class misclassification breakdown (paper Section 6 analysis).
-# =============================================================================
-
 import os
 import time
 
 import matplotlib
-matplotlib.use("Agg")  # non-interactive backend
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
@@ -38,40 +26,15 @@ def evaluate_model(
     y_test:       np.ndarray,
     dataset_name: str = "Dataset",
 ) -> dict:
-    """
-    Compute classification metrics and save confusion matrix + ROC curve.
-
-    Matches paper Table 1 columns:
-        R (Recall), P (Precision), F1-Score, Acc, AccB, Inference Time, FPS
-
-    Parameters
-    ----------
-    model        : Trained Keras model.
-    X_test       : [N, T, H, W, C] float32
-    y_test       : [N] int labels
-    dataset_name : Used in plot titles and output filenames.
-
-    Returns
-    -------
-    dict with keys: acc, bal_acc, prec, rec, f1, auc, fps, ms_per_frame
-    """
-
-    # ── Timed single-sample inference (paper Table 1 method) ─────────────────
-    # Paper measures single-frame latency (batch_size=1) on A100.
-    # We replicate the same protocol on CPU.
     n_timing = min(50, len(X_test))
     times: list[float] = []
     for i in range(n_timing):
         t0 = time.perf_counter()
         model.predict(X_test[i:i+1], verbose=0)
         times.append(time.perf_counter() - t0)
-
-    # Drop first 5 samples (JIT / cache warm-up) for stable estimate
     stable_times = times[5:] if len(times) > 5 else times
     avg_ms       = np.mean(stable_times) * 1000
     fps          = 1000.0 / avg_ms if avg_ms > 0 else 0.0
-
-    # ── Batch prediction for metrics ─────────────────────────────────────────
     y_prob = model.predict(X_test, batch_size=CONFIG["batch_size"]).flatten().astype("float32")
     y_pred = (y_prob >= 0.5).astype(int)
 
@@ -81,16 +44,13 @@ def evaluate_model(
     rec     = recall_score(y_test, y_pred, zero_division=0)
     f1      = f1_score(y_test, y_pred, zero_division=0)
     auc     = roc_auc_score(y_test, y_prob)
-
-    # ── Per-class breakdown (paper Section 6) ────────────────────────────────
     real_idx = np.where(y_test == 0)[0]
     fake_idx = np.where(y_test == 1)[0]
     real_correct = np.sum(y_pred[real_idx] == 0)
     fake_correct = np.sum(y_pred[fake_idx] == 1)
-    real_as_fake = len(real_idx) - real_correct  # false positives (paper notes 19/21)
-    fake_as_real = len(fake_idx) - fake_correct  # false negatives
-
-    # ── Console report (Table 1 format) ──────────────────────────────────────
+    real_as_fake = len(real_idx) - real_correct
+    
+    fake_as_real = len(fake_idx) - fake_correct
     sep = "=" * 56
     print(f"\n{sep}")
     print(f"  Evaluation — {dataset_name}")
@@ -110,8 +70,6 @@ def evaluate_model(
     print(f"    Fake correctly classified : {fake_correct}/{len(fake_idx)}")
     print(f"    Fake misclassified as real: {fake_as_real}/{len(fake_idx)}")
     print(f"{sep}\n")
-
-    # ── Plots ─────────────────────────────────────────────────────────────────
     tag = dataset_name.replace(" ", "_")
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     fig.suptitle(f"Evaluation — {dataset_name}", fontsize=14)
@@ -147,7 +105,6 @@ def evaluate_model(
 
 
 def plot_training_curves(history, dataset_name: str = "Dataset") -> None:
-    """Save loss and accuracy training curves."""
     tag = dataset_name.replace(" ", "_")
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     fig.suptitle(f"Training Curves — {dataset_name}", fontsize=14)
@@ -157,13 +114,12 @@ def plot_training_curves(history, dataset_name: str = "Dataset") -> None:
     axes[0].set_title("Loss")
     axes[0].set_xlabel("Epoch")
     axes[0].legend()
-
     axes[1].plot(history.history["accuracy"],     label="Train Accuracy")
     axes[1].plot(history.history["val_accuracy"], label="Val Accuracy", linestyle="--")
     axes[1].set_title("Accuracy")
+    
     axes[1].set_xlabel("Epoch")
     axes[1].legend()
-
     plt.tight_layout()
     out_path = os.path.join(CONFIG["output_dir"], f"training_curves_{tag}.png")
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -172,7 +128,6 @@ def plot_training_curves(history, dataset_name: str = "Dataset") -> None:
 
 
 def print_ablation_summary(ablation_results: dict) -> None:
-    """Pretty-print ablation study results (paper Table 3 format)."""
     print("\nAblation Study Summary")
     print(f"{'Variant':<20} {'Recall':>8} {'Precision':>10} "
           f"{'Accuracy':>10} {'AUC':>8} {'FPS':>7}")
