@@ -2,6 +2,7 @@
 
 ## Abstract
 This project is an optimised implementation of the **LightFakeDetect** architecture, originally proposed by AlMuhaideb et al. (2025). The goal was to reproduce a state-of-the-art deepfake detection pipeline (MTCNN + MobileNet + CBAM + GRU) and re-engineer it to run efficiently on consumer-grade hardware (**Ryzen 5 7520U, 16GB RAM**). 
+Th dataset used for both the original and my pipeline is [Celeb-df-v2](https://www.kaggle.com/datasets/reubensuju/celeb-df-v2)
 
 ## Adaptations made
 To adapt the paper's GPU-centric approach for a CPU environment, I implemented these structural and pipeline changes:
