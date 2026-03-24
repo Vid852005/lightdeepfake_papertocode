@@ -1,16 +1,3 @@
-# =============================================================================
-# migrate_model.py — One-time weight migration utility
-#
-# Use this if you have an old .keras file saved with the Lambda-based CBAM
-# and need to load it into the new CBAMLayer subclass architecture.
-#
-# Usage:
-#   python migrate_model.py
-#   python migrate_model.py --old outputs/old_model.keras \
-#                           --new outputs/migrated_model.keras \
-#                           --seq-len 20 --img-size 112
-# =============================================================================
-
 import argparse
 
 import numpy as np
@@ -31,10 +18,6 @@ def parse_args():
     p.add_argument("--gru-layers", type=int, default=CONFIG["gru_layers"])
     p.add_argument("--gru-units",  type=int, default=CONFIG["gru_units"])
     return p.parse_args()
-
-
-# ── Old Lambda-based CBAM (matches what was originally saved) ────────────────
-
 def _channel_attention_old(x, reduction_ratio=1):
     channels = x.shape[-1]
     hidden = max(1, channels // reduction_ratio)
@@ -47,7 +30,6 @@ def _channel_attention_old(x, reduction_ratio=1):
     scale    = layers.Activation("sigmoid")(avg_out + max_out)
     scale    = layers.Reshape((1, 1, channels))(scale)
     return layers.Multiply()([x, scale])
-
 def _spatial_attention_old(x, kernel_size=7):
     avg_pool = tf.reduce_mean(x, axis=-1, keepdims=True)
     max_pool = tf.reduce_max(x,  axis=-1, keepdims=True)
@@ -78,10 +60,6 @@ def build_old_model(seq_len, img_size, gru_layers, gru_units):
                        name=f"gru_{i+1}")(x)
     out = layers.Dense(1, activation="sigmoid", name="output")(x)
     return Model(inp, out, name="LightFakeDetect")
-
-
-# ── New CBAMLayer subclass ────────────────────────────────────────────────────
-
 class CBAMLayer(layers.Layer):
     def __init__(self, reduction_ratio=1, kernel_size=7, **kwargs):
         super().__init__(**kwargs)
@@ -151,12 +129,8 @@ def main():
     print("Building new CBAMLayer architecture...")
     new_model = build_new_model(args.seq_len, args.img_size,
                                 args.gru_layers, args.gru_units)
-
-    # Initialise new model
     dummy = tf.zeros((1, args.seq_len, args.img_size, args.img_size, 3))
     _ = new_model(dummy)
-
-    # Copy by name
     old_by_name = {l.name: l for l in old_model.layers}
     new_by_name = {l.name: l for l in new_model.layers}
 
