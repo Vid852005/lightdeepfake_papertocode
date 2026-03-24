@@ -1,22 +1,3 @@
-# =============================================================================
-# ablation.py — Ablation study: evaluate each component's contribution
-#
-# Replicates paper Table 3 (Section 5) on Celeb-DF v2:
-#   - full          : MobileNet + CBAM + GRU
-#   - no_cbam       : MobileNet + GRU only
-#   - no_gru        : MobileNet + CBAM + Dense
-#   - standard_cnn  : Small CNN + GRU (no MobileNet)
-#
-# Fix applied: variants now pass gru_layers and gru_units from CONFIG so
-# ablation results are always comparable to the main model, regardless of
-# which config (paper or reduced) is active. Previously hardcoded to 4/128
-# while the main config might use 2/64, making comparisons invalid.
-#
-# Usage:
-#   python ablation.py
-#   python ablation.py --max-videos 200   # quick smoke-test (~1 hr on CPU)
-# =============================================================================
-
 import argparse
 import os
 
@@ -51,8 +32,6 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("  LightFakeDetect — Ablation Study (Celeb-DF v2)")
     print("=" * 60 + "\n")
-
-    # ── Load & preprocess ────────────────────────────────────────────────────
     samples = load_video_paths(
         real_dir=CONFIG["celeb_df_real_dir"],
         fake_dir=CONFIG["celeb_df_fake_dir"],
@@ -62,7 +41,6 @@ def main() -> None:
     if not samples:
         print("[ERROR] No videos found — see data/ directory instructions.")
         return
-
     labels = [s[1] for s in samples]
     train_val, test = train_test_split(
         samples, test_size=0.20, random_state=CONFIG["seed"], stratify=labels
@@ -81,7 +59,6 @@ def main() -> None:
     weights = compute_class_weight("balanced", classes=classes, y=y_train)
     class_weight_dict = dict(zip(classes.tolist(), weights.tolist()))
 
-    # ── Run variants ─────────────────────────────────────────────────────────
     variants = ["full", "no_cbam", "no_gru", "standard_cnn"]
     ablation_results: dict = {}
 
@@ -90,8 +67,7 @@ def main() -> None:
         print(f"  Variant: {variant}")
         print("─" * 50)
 
-        # Fix: pass gru_layers/gru_units from CONFIG so variants are always
-        # consistent with the main model's configuration
+
         m = build_ablation_variant(
             variant=variant,
             seq_len=CONFIG["max_frames"],
@@ -123,8 +99,6 @@ def main() -> None:
         save_path = os.path.join(CONFIG["output_dir"], f"ablation_{variant}.keras")
         m.save(save_path)
         print(f"  Model saved → {save_path}")
-
-    # ── Summary ───────────────────────────────────────────────────────────────
     print_ablation_summary(ablation_results)
     print(f"\nAblation complete. Outputs in: {CONFIG['output_dir']}")
 
